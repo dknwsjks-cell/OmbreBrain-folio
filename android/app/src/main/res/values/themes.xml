@@ -1,9 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <style name="Theme.OmbreBrain" parent="Theme.AppCompat.Light.DarkActionBar">
-        <item name="colorPrimary">#4A90D9</item>
-        <item name="colorPrimaryDark">#357ABD</item>
-        <item name="colorAccent">#FF6B35</item>
-        <item name="android:statusBarColor">#357ABD</item>
-    </style>
-</resources>
