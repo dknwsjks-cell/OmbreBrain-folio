@@ -1,9 +1,9 @@
 name: Build OmbreBrain APK
 
 on:
-  workflow_dispatch:    # 手动触发
+  workflow_dispatch:
   push:
-    branches: [main]   # 推送 main 时自动构建
+    branches: [main]
 
 env:
   JAVA_VERSION: '17'
@@ -30,58 +30,50 @@ jobs:
         with:
           gradle-version: 8.5
 
-      - name: Copy frontend assets into Android project
+      - name: Generate consistent signing keystore
+        run: |
+          KEYSTORE="android/ombrebrain.keystore"
+          if [ ! -f "$KEYSTORE" ]; then
+            echo "Creating release keystore (10-year validity)..."
+            keytool -genkey -v \
+              -keystore "$KEYSTORE" \
+              -alias ombrebrain \
+              -keyalg RSA -keysize 2048 \
+              -validity 10000 \
+              -storepass ombrebrain123 \
+              -keypass ombrebrain123 \
+              -dname "CN=OmbreBrain, OU=App, O=OmbreBrain, L=Unknown, ST=Unknown, C=CN"
+          fi
+
+      - name: Copy frontend assets
         run: |
           mkdir -p android/app/src/main/assets/v2
-          if [ -d "v2" ]; then
-            cp -r v2/* android/app/src/main/assets/v2/
-            echo "Copied v2/ assets"
-          fi
-          if [ -f "dashboard.html" ]; then
-            cp dashboard.html android/app/src/main/assets/
-            echo "Copied dashboard.html"
-          fi
-          echo "=== Assets directory ==="
-          find android/app/src/main/assets -type f | head -30
+          if [ -d "v2" ]; then cp -r v2/* android/app/src/main/assets/v2/; fi
+          if [ -f "dashboard.html" ]; then cp dashboard.html android/app/src/main/assets/; fi
 
       - name: Generate app icon
         run: |
-          python3 << 'EOF'
+          python3 << 'PYEOF'
           import struct, zlib, os
-
-          def make_png(size, r=74, g=144, b=217):
+          def make_png(sz, r=74, g=144, b=217):
               raw = b''
-              for y in range(size):
+              for y in range(sz):
                   raw += b'\x00'
-                  for x in range(size):
-                      raw += bytes([r, g, b, 255])
-              def chunk(ctype, data):
-                  c = ctype + data
-                  return struct.pack('>I', len(data)) + c + struct.pack('>I', zlib.crc32(c) & 0xffffffff)
-              ihdr = struct.pack('>IIBBBBB', size, size, 8, 6, 0, 0, 0)
-              return b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', ihdr) + chunk(b'IDAT', zlib.compress(raw)) + chunk(b'IEND', b'')
+                  for x in range(sz): raw += bytes([r,g,b,255])
+              def ck(t,d): c=t+d; return struct.pack('>I',len(d))+c+struct.pack('>I',zlib.crc32(c)&0xffffffff)
+              ihdr=struct.pack('>IIBBBBB',sz,sz,8,6,0,0,0)
+              return b'\x89PNG\r\n\x1a\n'+ck(b'IHDR',ihdr)+ck(b'IDAT',zlib.compress(raw))+ck(b'IEND',b'')
+          for n,s in [('mipmap-mdpi',48),('mipmap-hdpi',72),('mipmap-xhdpi',96),('mipmap-xxhdpi',144)]:
+              p=f'android/app/src/main/res/{n}/ic_launcher.png'; os.makedirs(os.path.dirname(p),exist_ok=True); open(p,'wb').write(make_png(s))
+          PYEOF
 
-          sizes = {'mipmap-mdpi': 48, 'mipmap-hdpi': 72, 'mipmap-xhdpi': 96, 'mipmap-xxhdpi': 144}
-          for name, sz in sizes.items():
-              path = f'android/app/src/main/res/{name}/ic_launcher.png'
-              os.makedirs(os.path.dirname(path), exist_ok=True)
-              with open(path, 'wb') as f:
-                  f.write(make_png(sz))
-              print(f'Created {path} ({sz}x{sz})')
-          EOF
-
-      - name: Build debug APK
+      - name: Build signed debug APK
         working-directory: ./android
-        run: |
-          gradle assembleDebug --no-daemon --console=plain
+        run: gradle assembleDebug --no-daemon --console=plain
 
-      - name: Upload APK artifact
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: ombrebrain-apk-debug
           path: android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
-
-      - name: Get APK info
-        run: |
-          ls -lh android/app/build/outputs/apk/debug/ 2>/dev/null || echo "No APK found at expected path"
