@@ -1,0 +1,87 @@
+name: Build OmbreBrain APK
+
+on:
+  workflow_dispatch:    # 手动触发
+  push:
+    branches: [main]   # 推送 main 时自动构建
+
+env:
+  JAVA_VERSION: '17'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: 'temurin'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: 8.5
+
+      - name: Copy frontend assets into Android project
+        run: |
+          mkdir -p android/app/src/main/assets/v2
+          if [ -d "v2" ]; then
+            cp -r v2/* android/app/src/main/assets/v2/
+            echo "Copied v2/ assets"
+          fi
+          if [ -f "dashboard.html" ]; then
+            cp dashboard.html android/app/src/main/assets/
+            echo "Copied dashboard.html"
+          fi
+          echo "=== Assets directory ==="
+          find android/app/src/main/assets -type f | head -30
+
+      - name: Generate app icon
+        run: |
+          python3 << 'EOF'
+          import struct, zlib, os
+
+          def make_png(size, r=74, g=144, b=217):
+              raw = b''
+              for y in range(size):
+                  raw += b'\x00'
+                  for x in range(size):
+                      raw += bytes([r, g, b, 255])
+              def chunk(ctype, data):
+                  c = ctype + data
+                  return struct.pack('>I', len(data)) + c + struct.pack('>I', zlib.crc32(c) & 0xffffffff)
+              ihdr = struct.pack('>IIBBBBB', size, size, 8, 6, 0, 0, 0)
+              return b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', ihdr) + chunk(b'IDAT', zlib.compress(raw)) + chunk(b'IEND', b'')
+
+          sizes = {'mipmap-mdpi': 48, 'mipmap-hdpi': 72, 'mipmap-xhdpi': 96, 'mipmap-xxhdpi': 144}
+          for name, sz in sizes.items():
+              path = f'android/app/src/main/res/{name}/ic_launcher.png'
+              os.makedirs(os.path.dirname(path), exist_ok=True)
+              with open(path, 'wb') as f:
+                  f.write(make_png(sz))
+              print(f'Created {path} ({sz}x{sz})')
+          EOF
+
+      - name: Build debug APK
+        working-directory: ./android
+        run: |
+          gradle assembleDebug --no-daemon --console=plain
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ombrebrain-apk-debug
+          path: android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+
+      - name: Get APK info
+        run: |
+          ls -lh android/app/build/outputs/apk/debug/ 2>/dev/null || echo "No APK found at expected path"
